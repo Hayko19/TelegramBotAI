@@ -1,0 +1,12 @@
+# === Окружение ===
+.env
+venv/
+__pycache__/
+*.pyc
+
+# === Данные ===
+bot_data.db
+
+# === IDE ===
+.vscode/
+.idea/
