@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 import config
 import database
-import gemini
+import ai
 
 # === Логирование ===
 logging.basicConfig(
@@ -171,7 +171,7 @@ async def handle_chat_message(message: Message):
     history = chat_histories[user_id]
 
     # Генерируем ответ
-    response_text = await gemini.chat_response(clean_text, history)
+    response_text = await ai.chat_response(clean_text, history)
 
     # Сохраняем в историю (ограничиваем 20 записей — 10 пар)
     chat_histories[user_id].append({"role": "user", "text": clean_text})
@@ -202,12 +202,12 @@ async def handle_chat_message(message: Message):
 
 async def send_scheduled_poll():
     """Генерирует и отправляет опрос в чат."""
-    topic = gemini.get_random_topic()
+    topic = ai.get_random_topic()
     recent_questions = await database.get_recent_polls(20)
 
     logger.info("Генерация опроса на тему: %s", topic)
 
-    poll_data = await gemini.generate_poll(topic, recent_questions)
+    poll_data = await ai.generate_poll(topic, recent_questions)
 
     if poll_data is None:
         logger.error("Не удалось сгенерировать опрос. Пропускаем.")
@@ -275,7 +275,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         scheduler.shutdown()
-        await gemini.close_client()
+        await ai.close_client()
         await bot.session.close()
 
 
