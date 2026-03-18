@@ -7,6 +7,7 @@ import random
 import httpx
 
 import config
+import database
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,7 @@ async def chat_response(
         return "⚠️ Произошла ошибка при обращении к ИИ. Попробуйте позже."
 
 
-def get_random_topic() -> str:
-    """Возвращает случайную тему из списка."""
-    return random.choice(config.POLL_TOPICS)
+async def get_random_topic() -> str:
+    """Возвращает случайную тему из списка в БД."""
+    topics = await database.get_poll_topics()
+    return random.choice(topics)

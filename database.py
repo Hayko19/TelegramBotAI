@@ -179,3 +179,9 @@ async def block_user_today(user_id: int, limit: int):
             data,
         )
         await db.commit()
+
+
+async def get_poll_topics() -> list[str]:
+    """Получить список тем для опросов из БД."""
+    topics_str = await get_setting("poll_topics", "история, кулинария, игры, кино")
+    return [t.strip() for t in topics_str.split(",") if t.strip()]

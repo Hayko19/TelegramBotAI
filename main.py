@@ -9,7 +9,7 @@ from collections import defaultdict
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BotCommand, BotCommandScopeChat
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -68,7 +68,8 @@ async def cmd_start(message: Message):
 async def cmd_help(message: Message):
     """Подробная помощь."""
     await database.save_user(message.from_user.id, message.from_user.username)
-    topics_text = ", ".join(f"«{t}»" for t in config.POLL_TOPICS)
+    topics = await database.get_poll_topics()
+    topics_text = ", ".join(f"«{t}»" for t in topics)
     await message.answer(
         "📖 <b>Справка по боту</b>\n\n"
         "<b>🗳 Опросы-дискуссии</b>\n"
@@ -134,12 +135,14 @@ async def cmd_admin(message: Message):
         # Главное меню админки
         limit = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
         schedule = await database.get_setting("poll_hours", config.POLL_HOURS)
+        topics = await database.get_setting("poll_topics", "история, кулинария, игры, кино")
 
         msg_text = (
             "🛠 <b>Панель администратора</b>\n\n"
             f"📊 <b>Текущие настройки:</b>\n"
             f"• Дневной лимит ИИ: <code>{limit}</code>\n"
-            f"• Расписание опросов: <code>{schedule}</code>\n\n"
+            f"• Расписание опросов: <code>{schedule}</code>\n"
+            f"• Темы опросов: <code>{topics}</code>\n\n"
             "Управляйте настройками кнопками или командами (см. <code>/adminhelp</code>)."
         )
 
@@ -183,6 +186,16 @@ async def cmd_admin(message: Message):
                 await setup_poll_jobs(scheduler)
             else:
                 await message.answer("⚠️ Планировщик не инициализирован, изменения вступят после рестарта.")
+            return
+
+        # 3. Темы опросов
+        if sub_cmd == "topics":
+            if not target_arg.strip():
+                await message.answer("❌ Темы не могут быть пустыми.")
+                return
+
+            await database.set_setting("poll_topics", target_arg)
+            await message.answer(f"✅ Темы опросов обновлены на: <b>{target_arg}</b>", parse_mode="HTML")
             return
 
         # --- Для команд ниже нужен target_id ---
@@ -309,7 +322,8 @@ async def cmd_admin_help(message: Message):
         "• <code>/admin reset &lt;ID|@тег&gt;</code> — Сбросить лимит конкретного пользователя.\n"
         "• <code>/admin block &lt;ID|@тег&gt;</code> — Завершить лимит (заблокировать на сегодня).\n"
         "• <code>/admin setlimit &lt;число&gt;</code> — Изменить общий лимит для всех.\n"
-        "• <code>/admin schedule &lt;часы&gt;</code> — Изменить расписание опросов (например, <code>09:00,21:00</code>).\n\n"
+        "• <code>/admin schedule &lt;часы&gt;</code> — Изменить расписание опросов (например, <code>09:00,21:00</code>).\n"
+        "• <code>/admin topics &lt;темы&gt;</code> — Изменить список тем через запятую.\n\n"
         "💡 <i>Пример:</i> <code>/admin limit @nickname</code>",
         parse_mode="HTML"
     )
@@ -415,7 +429,7 @@ async def handle_chat_message(message: Message):
 
 async def send_scheduled_poll():
     """Генерирует и отправляет опрос в чат."""
-    topic = ai.get_random_topic()
+    topic = await ai.get_random_topic()
     recent_questions = await database.get_recent_polls(20)
 
     logger.info("Генерация опроса на тему: %s", topic)
@@ -490,6 +504,25 @@ async def main():
     bot_info = await bot.get_me()
     BOT_USERNAME = bot_info.username
     logger.info("Бот: @%s", BOT_USERNAME)
+
+    # ⬇️ НАСТРОЙКА МЕНЮ КОМАНД ⬇️
+    user_commands = [
+        BotCommand(command="start", description="Запуск бота"),
+        BotCommand(command="help", description="Справка"),
+        BotCommand(command="limit", description="Проверить лимит")
+    ]
+    await bot.set_my_commands(user_commands)
+
+    admin_commands = user_commands + [
+        BotCommand(command="admin", description="🛠 Панель админа"),
+        BotCommand(command="adminhelp", description="❓ Справка по админке")
+    ]
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.set_my_commands(commands=admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception:
+            pass
+    # ⬆️ КОНЕЦ НАСТРОЙКИ КОМАНД ⬆️
 
     global scheduler
 
