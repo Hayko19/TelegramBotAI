@@ -11,10 +11,7 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
 
 # === ИИ Провайдер (настраивается через .env — без изменений кода) ===
 AI_API_KEY = os.getenv("AI_API_KEY")
-AI_BASE_URL = os.getenv(
-    "AI_BASE_URL",
-    "https://openrouter.ai/api/v1/chat/completions"
-)
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
 AI_MODEL = os.getenv("AI_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 
 # === Лимиты ===

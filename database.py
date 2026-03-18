@@ -3,47 +3,56 @@ import os
 from datetime import datetime, timezone
 
 DB_PATH = os.getenv(
-    "DB_PATH",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db")
+    "DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db")
 )
+
 
 async def init_db():
     """Создание таблиц при первом запуске."""
 
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS user_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 timestamp TEXT NOT NULL
             )
-        """)
-        await db.execute("""
+        """
+        )
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS poll_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 question TEXT NOT NULL,
                 topic TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
-        """)
-        await db.execute("""
+        """
+        )
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT
             )
-        """)
-        await db.execute("""
+        """
+        )
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
 
-
-        await db.execute("""
+        await db.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_user_requests_user_id
             ON user_requests (user_id, timestamp)
-        """)
+        """
+        )
         await db.commit()
 
 
@@ -103,7 +112,7 @@ async def get_stats_today() -> dict:
         row = await cursor.fetchone()
         return {
             "users_count": row[0] if row else 0,
-            "requests_count": row[1] if row else 0
+            "requests_count": row[1] if row else 0,
         }
 
 
@@ -128,6 +137,7 @@ async def reset_user_requests_today(user_id: int):
         )
         await db.commit()
 
+
 async def save_user(user_id: int, username: str | None):
     """Записать или обновить юзернейм пользователя."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -147,6 +157,8 @@ async def get_user_id_by_username(username: str) -> int | None:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+
+
 async def get_setting(key: str, default: str) -> str:
     """Получить значение настройки из БД с фолбеком."""
     async with aiosqlite.connect(DB_PATH) as db:
