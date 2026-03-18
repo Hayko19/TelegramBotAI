@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 from collections import defaultdict
 
 from aiogram import Bot, Dispatcher, F
@@ -194,6 +195,7 @@ async def handle_chat_message(message: Message):
 
     # Экранируем HTML-символы в ответе ИИ, чтобы Telegram не крашился
     safe_response = html.escape(response_text)
+    safe_response = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', safe_response)
     await message.answer(safe_response + footer, parse_mode="HTML")
 
 

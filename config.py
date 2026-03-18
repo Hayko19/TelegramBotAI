@@ -37,4 +37,4 @@ except Exception:
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
 
 # === Системный промпт для генерации опросов ===
-POLL_SYSTEM_PROMPT = os.getenv("POLL_SYSTEM_PROMPT",)
+POLL_SYSTEM_PROMPT = os.getenv("POLL_SYSTEM_PROMPT")
