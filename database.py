@@ -27,6 +27,13 @@ async def init_db():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT
+            )
+        """)
+
+        await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_user_requests_user_id
             ON user_requests (user_id, timestamp)
         """)
@@ -114,3 +121,22 @@ async def reset_user_requests_today(user_id: int):
         )
         await db.commit()
 
+async def save_user(user_id: int, username: str | None):
+    """Записать или обновить юзернейм пользователя."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO users (user_id, username) VALUES (?, ?)",
+            (user_id, username if username else None),
+        )
+        await db.commit()
+
+
+async def get_user_id_by_username(username: str) -> int | None:
+    """Найти user_id по username (без @)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)",
+            (username,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None

@@ -43,6 +43,7 @@ BOT_USERNAME: str = ""
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Приветствие при первом запуске."""
+    await database.save_user(message.from_user.id, message.from_user.username)
     await message.answer(
         "👋 <b>Привет!</b> Я — бот для дискуссий.\n\n"
         "🧠 <b>Что я умею:</b>\n"
@@ -62,6 +63,7 @@ async def cmd_start(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     """Подробная помощь."""
+    await database.save_user(message.from_user.id, message.from_user.username)
     topics_text = ", ".join(f"«{t}»" for t in config.POLL_TOPICS)
     await message.answer(
         "📖 <b>Справка по боту</b>\n\n"
@@ -86,6 +88,7 @@ async def cmd_help(message: Message):
 @dp.message(Command("limit"))
 async def cmd_limit(message: Message):
     """Показывает оставшийся лимит запросов."""
+    await database.save_user(message.from_user.id, message.from_user.username)
     used = await database.get_user_requests_today(message.from_user.id)
     remaining = max(0, config.DAILY_USER_LIMIT - used)
     total = config.DAILY_USER_LIMIT
@@ -132,11 +135,21 @@ async def cmd_admin(message: Message):
         await message.answer("🛠 <b>Панель администратора</b>", reply_markup=keyboard, parse_mode="HTML")
     elif len(args) == 3:
         sub_cmd = args[1].lower()
-        try:
-            target_id = int(args[2])
-        except ValueError:
-            await message.answer("❌ ID пользователя должен быть числом.")
-            return
+        target_arg = args[2]
+
+        if target_arg.startswith("@"):
+            username = target_arg[1:]
+            target_id = await database.get_user_id_by_username(username)
+            if not target_id:
+                await message.answer(f"❌ Пользователь <code>@{username}</code> не найден в базе данных.", parse_mode="HTML")
+                return
+        else:
+            try:
+                target_id = int(target_arg)
+            except ValueError:
+                await message.answer("❌ ID пользователя должен быть числом или начинаться с @.")
+                return
+
 
         if sub_cmd == "limit":
             used = await database.get_user_requests_today(target_id)
@@ -225,7 +238,26 @@ async def process_admin_stats_back(callback: CallbackQuery):
     await callback.answer()
 
 
+@dp.message(Command("adminhelp"))
+async def cmd_admin_help(message: Message):
+    """Справка по командам администратора."""
+    if message.from_user.id not in config.ADMIN_IDS:
+        return  # Игнорируем обычных пользователей
+
+    await message.answer(
+        "📖 <b>Справка по админ-панели</b>\n\n"
+        "Вы можете управлять лимитами пользователей.\n\n"
+        "📋 <b>Команды:</b>\n"
+        "• <code>/admin</code> — Открыть меню кнопок (статистика, полный сброс).\n"
+        "• <code>/admin limit &lt;ID|@тег&gt;</code> — Посмотреть лимит конкретного пользователя.\n"
+        "• <code>/admin reset &lt;ID|@тег&gt;</code> — Сбросить лимит конкретного пользователя.\n\n"
+        "💡 <i>Пример:</i> <code>/admin limit @nickname</code>",
+        parse_mode="HTML"
+    )
+
+
 # ========== ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (ЧАТ) ==========
+
 
 
 
@@ -255,6 +287,7 @@ async def handle_chat_message(message: Message):
     """Обработка текстовых сообщений — чат с ИИ."""
     user_id = message.from_user.id
     user_text = message.text
+    await database.save_user(user_id, message.from_user.username)
 
     # В групповых чатах отвечаем только если бот упомянут или ему reply
     is_private = message.chat.type == ChatType.PRIVATE
