@@ -36,6 +36,10 @@ chat_histories: dict[int, list[dict]] = defaultdict(list)
 # Имя бота (заполняется при запуске)
 BOT_USERNAME: str = ""
 
+# Планировщик (для доступа из админки)
+scheduler: AsyncIOScheduler | None = None
+
+
 
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 
@@ -137,6 +141,27 @@ async def cmd_admin(message: Message):
         sub_cmd = args[1].lower()
         target_arg = args[2]
 
+        # 1. Глобальный лимит
+        if sub_cmd == "setlimit":
+            try:
+                val = int(target_arg)
+                await database.set_setting("daily_limit", str(val))
+                await message.answer(f"✅ Общий лимит установлен на <b>{val}</b>", parse_mode="HTML")
+            except ValueError:
+                await message.answer("❌ Лимит должен быть числом.")
+            return
+
+        # 2. Расписание опросов
+        if sub_cmd == "schedule":
+            await database.set_setting("poll_hours", target_arg)
+            await message.answer(f"✅ Расписание опросов обновлено на <b>{target_arg}</b>", parse_mode="HTML")
+            if scheduler:
+                await setup_poll_jobs(scheduler)
+            else:
+                await message.answer("⚠️ Планировщик не инициализирован, изменения вступят после рестарта.")
+            return
+
+        # --- Для команд ниже нужен target_id ---
         if target_arg.startswith("@"):
             username = target_arg[1:]
             target_id = await database.get_user_id_by_username(username)
@@ -150,23 +175,28 @@ async def cmd_admin(message: Message):
                 await message.answer("❌ ID пользователя должен быть числом или начинаться с @.")
                 return
 
-
         if sub_cmd == "limit":
             used = await database.get_user_requests_today(target_id)
-            remaining = max(0, config.DAILY_USER_LIMIT - used)
+            limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+            current_limit = int(limit_str)
+            remaining = max(0, current_limit - used)
             await message.answer(
                 f"👤 <b>Пользователь</b> <code>{target_id}</code>\n"
-                f"Использовано: {used}/{config.DAILY_USER_LIMIT}\n"
+                f"Использовано: {used}/{current_limit}\n"
                 f"Осталось: <b>{remaining}</b>",
                 parse_mode="HTML"
             )
         elif sub_cmd == "reset":
             await database.reset_user_requests_today(target_id)
             await message.answer(f"✅ Лимит для <code>{target_id}</code> сброшен.", parse_mode="HTML")
+        elif sub_cmd == "block":
+            limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+            current_limit = int(limit_str)
+            await database.block_user_today(target_id, current_limit)
+            await message.answer(f"🛑 Лимит для <code>{target_id}</code> исчерпан (заблокирован до завтра).", parse_mode="HTML")
         else:
-            await message.answer("❓ Неизвестная команда.\nИспользование:\n/admin limit <id>\n/admin reset <id>")
-    else:
-        await message.answer("❓ Использование:\n/admin\n/admin limit <id>\n/admin reset <id>")
+            await message.answer("❓ Неизвестная команда.\nИспользование:\n/admin limit <id|@тег>\n/admin reset <id|@тег>\n/admin block <id|@тег>\n/admin setlimit <число>\n/admin schedule <часы>")
+
 
 
 @dp.callback_query(F.data == "admin_stats")
@@ -246,14 +276,18 @@ async def cmd_admin_help(message: Message):
 
     await message.answer(
         "📖 <b>Справка по админ-панели</b>\n\n"
-        "Вы можете управлять лимитами пользователей.\n\n"
+        "Вы можете управлять лимитами и расписанием.\n\n"
         "📋 <b>Команды:</b>\n"
-        "• <code>/admin</code> — Открыть меню кнопок (статистика, полный сброс).\n"
+        "• <code>/admin</code> — Открыть меню (статистика, сброс всех).\n"
         "• <code>/admin limit &lt;ID|@тег&gt;</code> — Посмотреть лимит конкретного пользователя.\n"
-        "• <code>/admin reset &lt;ID|@тег&gt;</code> — Сбросить лимит конкретного пользователя.\n\n"
+        "• <code>/admin reset &lt;ID|@тег&gt;</code> — Сбросить лимит конкретного пользователя.\n"
+        "• <code>/admin block &lt;ID|@тег&gt;</code> — Завершить лимит (заблокировать на сегодня).\n"
+        "• <code>/admin setlimit &lt;число&gt;</code> — Изменить общий лимит для всех.\n"
+        "• <code>/admin schedule &lt;часы&gt;</code> — Изменить расписание опросов (например, <code>09:00,21:00</code>).\n\n"
         "💡 <i>Пример:</i> <code>/admin limit @nickname</code>",
         parse_mode="HTML"
     )
+
 
 
 # ========== ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (ЧАТ) ==========
@@ -297,10 +331,13 @@ async def handle_chat_message(message: Message):
 
     # Проверяем лимит
     used = await database.get_user_requests_today(user_id)
-    if used >= config.DAILY_USER_LIMIT:
+    limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+    current_limit = int(limit_str)
+
+    if used >= current_limit:
         await message.answer(
             "🔴 <b>Дневной лимит исчерпан!</b>\n"
-            f"Вы использовали все {config.DAILY_USER_LIMIT} "
+            f"Вы использовали все {current_limit} "
             f"сообщений на сегодня.\n"
             "Лимит обновится завтра в 00:00 UTC (03:00 МСК).\n\n"
             "А пока — ждите опрос! 🧠",
@@ -333,12 +370,12 @@ async def handle_chat_message(message: Message):
 
     # Показываем оставшийся лимит, когда он заканчивается
     new_used = used + 1
-    remaining = config.DAILY_USER_LIMIT - new_used
+    remaining = current_limit - new_used
     footer = ""
     if remaining <= 5:
         footer = (
             f"\n\n⚠️ <i>Осталось сообщений: "
-            f"{remaining}/{config.DAILY_USER_LIMIT}</i>"
+            f"{remaining}/{current_limit}</i>"
         )
 
     # Экранируем HTML-символы в ответе ИИ, чтобы Telegram не крашился
@@ -385,6 +422,36 @@ async def send_scheduled_poll():
 # ========== ЗАПУСК ==========
 
 
+async def setup_poll_jobs(scheduler: AsyncIOScheduler):
+    """Настройка задач опроса в планировщике из БД."""
+    hours_str = await database.get_setting("poll_hours", config.POLL_HOURS)
+    logger.info(f"Загрузка расписания опросов: {hours_str}")
+    
+    schedule_list = []
+    try:
+        for h_m in hours_str.split(","):
+            if ":" in h_m:
+                h, m = h_m.strip().split(":")
+                schedule_list.append({"hour": int(h), "minute": int(m)})
+    except Exception as e:
+        logger.error(f"Ошибка парсинга расписания: {e}")
+        schedule_list = [{"hour": 7, "minute": 0}, {"hour": 17, "minute": 0}]
+
+    scheduler.remove_all_jobs()
+    for schedule in schedule_list:
+        scheduler.add_job(
+            send_scheduled_poll,
+            CronTrigger(
+                hour=schedule["hour"],
+                minute=schedule["minute"],
+                timezone="UTC",
+            ),
+            id=f"poll_{schedule['hour']}_{schedule['minute']}",
+            replace_existing=True,
+        )
+        logger.info(f"Опрос запланирован на {schedule['hour']:02d}:{schedule['minute']:02d} UTC")
+
+
 async def main():
     """Точка входа."""
     global BOT_USERNAME
@@ -398,24 +465,12 @@ async def main():
     BOT_USERNAME = bot_info.username
     logger.info("Бот: @%s", BOT_USERNAME)
 
+    global scheduler
+
     # Настройка планировщика
     scheduler = AsyncIOScheduler(timezone="UTC")
-    for schedule in config.POLL_SCHEDULE:
-        scheduler.add_job(
-            send_scheduled_poll,
-            CronTrigger(
-                hour=schedule["hour"],
-                minute=schedule["minute"],
-                timezone="UTC",
-            ),
-            id=f"poll_{schedule['hour']}_{schedule['minute']}",
-            replace_existing=True,
-        )
-        logger.info(
-            "Опрос запланирован на %02d:%02d UTC",
-            schedule["hour"],
-            schedule["minute"],
-        )
+    await setup_poll_jobs(scheduler)
+
 
     scheduler.start()
 

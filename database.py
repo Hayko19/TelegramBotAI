@@ -32,6 +32,13 @@ async def init_db():
                 username TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
 
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_user_requests_user_id
@@ -140,3 +147,35 @@ async def get_user_id_by_username(username: str) -> int | None:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+async def get_setting(key: str, default: str) -> str:
+    """Получить значение настройки из БД с фолбеком."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT value FROM settings WHERE key = ?",
+            (key,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else default
+
+
+async def set_setting(key: str, value: str):
+    """Записать или обновить настройку в БД."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        await db.commit()
+
+
+async def block_user_today(user_id: int, limit: int):
+    """Заблокировать пользователя на сегодня (завершить лимит)."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Вставляем искусственные запросы до лимита
+        data = [(user_id, now)] * limit
+        await db.executemany(
+            "INSERT INTO user_requests (user_id, timestamp) VALUES (?, ?)",
+            data,
+        )
+        await db.commit()
