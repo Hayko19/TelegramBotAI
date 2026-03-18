@@ -9,7 +9,8 @@ from collections import defaultdict
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -111,7 +112,121 @@ async def cmd_limit(message: Message):
         )
 
 
+# ========== ОБРАБОТЧИКИ АДМИН-ПАНЕЛИ ==========
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """Панель администратора."""
+    if message.from_user.id not in config.ADMIN_IDS:
+        return  # Игнорируем обычных пользователей
+
+    args = message.text.split()
+    if len(args) == 1:
+        # Главное меню админки
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+                [InlineKeyboardButton(text="🔄 Сбросить все лимиты", callback_data="admin_reset_confirm")],
+            ]
+        )
+        await message.answer("🛠 <b>Панель администратора</b>", reply_markup=keyboard, parse_mode="HTML")
+    elif len(args) == 3:
+        sub_cmd = args[1].lower()
+        try:
+            target_id = int(args[2])
+        except ValueError:
+            await message.answer("❌ ID пользователя должен быть числом.")
+            return
+
+        if sub_cmd == "limit":
+            used = await database.get_user_requests_today(target_id)
+            remaining = max(0, config.DAILY_USER_LIMIT - used)
+            await message.answer(
+                f"👤 <b>Пользователь</b> <code>{target_id}</code>\n"
+                f"Использовано: {used}/{config.DAILY_USER_LIMIT}\n"
+                f"Осталось: <b>{remaining}</b>",
+                parse_mode="HTML"
+            )
+        elif sub_cmd == "reset":
+            await database.reset_user_requests_today(target_id)
+            await message.answer(f"✅ Лимит для <code>{target_id}</code> сброшен.", parse_mode="HTML")
+        else:
+            await message.answer("❓ Неизвестная команда.\nИспользование:\n/admin limit <id>\n/admin reset <id>")
+    else:
+        await message.answer("❓ Использование:\n/admin\n/admin limit <id>\n/admin reset <id>")
+
+
+@dp.callback_query(F.data == "admin_stats")
+async def process_admin_stats(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+    
+    stats = await database.get_stats_today()
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_stats_back")]
+        ]
+    )
+    await callback.message.edit_text(
+        f"📊 <b>Статистика за сегодня:</b>\n\n"
+        f"👥 Активных пользователей: <b>{stats['users_count']}</b>\n"
+        f"💬 Всего запросов: <b>{stats['requests_count']}</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_reset_confirm")
+async def process_admin_reset_confirm(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, сбросить всё", callback_data="admin_reset_all")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_stats_back")],
+        ]
+    )
+    await callback.message.edit_text(
+        "⚠️ <b>Вы уверены, что хотите сбросить лимиты ВСЕХ пользователей за сегодня?</b>",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_reset_all")
+async def process_admin_reset_all(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+    
+    await database.reset_all_requests_today()
+    await callback.message.edit_text("✅ <b>Все лимиты за сегодня успешно сброшены!</b>", parse_mode="HTML")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_stats_back")
+async def process_admin_stats_back(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton(text="🔄 Сбросить все лимиты", callback_data="admin_reset_confirm")],
+        ]
+    )
+    await callback.message.edit_text("🛠 <b>Панель администратора</b>", reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
 # ========== ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (ЧАТ) ==========
+
 
 
 def _is_bot_mentioned(message: Message) -> bool:

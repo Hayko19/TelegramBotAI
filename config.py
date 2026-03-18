@@ -6,6 +6,8 @@ load_dotenv()
 # === Telegram ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
+
 
 # === ИИ Провайдер (настраивается через .env — без изменений кода) ===
 AI_API_KEY = os.getenv("AI_API_KEY")

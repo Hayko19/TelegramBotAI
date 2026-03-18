@@ -76,3 +76,41 @@ async def get_recent_polls(limit: int = 20) -> list[str]:
         )
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
+
+
+async def get_stats_today() -> dict:
+    """Получить статистику запросов за сегодня."""
+    today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(DISTINCT user_id), COUNT(*) FROM user_requests WHERE timestamp >= ?",
+            (today_start,),
+        )
+        row = await cursor.fetchone()
+        return {
+            "users_count": row[0] if row else 0,
+            "requests_count": row[1] if row else 0
+        }
+
+
+async def reset_all_requests_today():
+    """Сбросить лимиты (удалить запросы) всех пользователей за сегодня."""
+    today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM user_requests WHERE timestamp >= ?",
+            (today_start,),
+        )
+        await db.commit()
+
+
+async def reset_user_requests_today(user_id: int):
+    """Сбросить лимит одного конкретного пользователя за сегодня."""
+    today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM user_requests WHERE user_id = ? AND timestamp >= ?",
+            (user_id, today_start),
+        )
+        await db.commit()
+
