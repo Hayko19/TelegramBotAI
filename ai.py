@@ -31,7 +31,9 @@ async def close_client():
         _http_client = None
 
 
-async def _call_ai(messages: list[dict], temperature: float = 0.8) -> str | None:
+async def _call_ai(
+    messages: list[dict], temperature: float = 0.8
+) -> str | None:
     """
     Универсальный вызов OpenAI-совместимого API.
     Работает с любым провайдером: OpenRouter, Gemini, OpenAI и др.
@@ -72,7 +74,9 @@ async def _call_ai(messages: list[dict], temperature: float = 0.8) -> str | None
         return None
 
 
-async def generate_poll(topic: str, recent_questions: list[str]) -> dict | None:
+async def generate_poll(
+    topic: str, recent_questions: list[str]
+) -> dict | None:
     """
     Генерирует вопрос для горячей дискуссии.
 
@@ -85,8 +89,9 @@ async def generate_poll(topic: str, recent_questions: list[str]) -> dict | None:
     """
     recent_text = ""
     if recent_questions:
-        recent_text = "\n\nНЕ ПОВТОРЯЙ эти вопросы, они уже были заданы:\n" + "\n".join(
-            f"- {q}" for q in recent_questions
+        recent_text = (
+            "\n\nНЕ ПОВТОРЯЙ эти вопросы, они уже были заданы:\n"
+            + "\n".join(f"- {q}" for q in recent_questions)
         )
 
     prompt = (
@@ -118,7 +123,11 @@ async def generate_poll(topic: str, recent_questions: list[str]) -> dict | None:
 
         data = json.loads(clean)
 
-        if "question" in data and "options" in data and 2 <= len(data["options"]) <= 4:
+        if (
+            "question" in data
+            and "options" in data
+            and 2 <= len(data["options"]) <= 4
+        ):
             return data
         else:
             logger.error("Некорректная структура ответа: %s", data)
@@ -129,7 +138,9 @@ async def generate_poll(topic: str, recent_questions: list[str]) -> dict | None:
         return None
 
 
-async def chat_response(user_message: str, history: list[dict] | None = None) -> str:
+async def chat_response(
+    user_message: str, history: list[dict] | None = None
+) -> str:
     """
     Генерирует ответ на сообщение пользователя.
 

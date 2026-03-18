@@ -144,12 +144,15 @@ async def cmd_admin(message: Message):
     if message.from_user.id not in config.ADMIN_IDS:
         return  # Игнорируем обычных пользователей
 
-    # Используем maxsplit=2, чтобы аргументы с пробелами (например, расписание) не ломались
+    # Используем maxsplit=2, чтобы аргументы с пробелами
+    # (например, расписание) не ломались
     args = message.text.split(None, 2)
 
     if len(args) == 1:
         # Главное меню админки
-        limit = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+        limit = await database.get_setting(
+            "daily_limit", str(config.DAILY_USER_LIMIT)
+        )
         schedule = await database.get_setting("poll_hours", config.POLL_HOURS)
         topics = await database.get_setting(
             "poll_topics", "история, кулинария, игры, кино"
@@ -161,7 +164,8 @@ async def cmd_admin(message: Message):
             f"• Дневной лимит ИИ: <code>{limit}</code>\n"
             f"• Расписание опросов: <code>{schedule}</code>\n"
             f"• Темы опросов: <code>{topics}</code>\n\n"
-            "Управляйте настройками кнопками или командами (см. <code>/adminhelp</code>)."
+            "Управляйте настройками кнопками или "
+            "командами (см. <code>/adminhelp</code>)."
         )
 
         keyboard = InlineKeyboardMarkup(
@@ -179,7 +183,9 @@ async def cmd_admin(message: Message):
                 ],
             ]
         )
-        await message.answer(msg_text, reply_markup=keyboard, parse_mode="HTML")
+        await message.answer(
+            msg_text, reply_markup=keyboard, parse_mode="HTML"
+        )
     elif len(args) == 2:
         sub_cmd = args[1].lower()
         if sub_cmd == "backup":
@@ -203,7 +209,8 @@ async def cmd_admin(message: Message):
                 val = int(target_arg)
                 await database.set_setting("daily_limit", str(val))
                 await message.answer(
-                    f"✅ Общий лимит установлен на <b>{val}</b>", parse_mode="HTML"
+                    f"✅ Общий лимит установлен на <b>{val}</b>",
+                    parse_mode="HTML",
                 )
             except ValueError:
                 await message.answer("❌ Лимит должен быть числом.")
@@ -217,7 +224,8 @@ async def cmd_admin(message: Message):
             time_pattern = re.compile(r"^(\d{2}:\d{2})(,\s*\d{2}:\d{2})*$")
             if not time_pattern.match(target_arg.strip()):
                 await message.answer(
-                    "❌ Неверный формат времени.\n" "Пример: <code>09:00, 15:30</code>",
+                    "❌ Неверный формат времени.\n"
+                    "Пример: <code>09:00, 15:30</code>",
                     parse_mode="HTML",
                 )
                 return
@@ -231,7 +239,8 @@ async def cmd_admin(message: Message):
                 await setup_poll_jobs(scheduler)
             else:
                 await message.answer(
-                    "⚠️ Планировщик не инициализирован, изменения вступят после рестарта."
+                    "⚠️ Планировщик не инициализирован, изменения "
+                    "вступят после рестарта."
                 )
             return
 
@@ -243,7 +252,8 @@ async def cmd_admin(message: Message):
 
             await database.set_setting("poll_topics", target_arg)
             await message.answer(
-                f"✅ Темы опросов обновлены на: <b>{target_arg}</b>", parse_mode="HTML"
+                f"✅ Темы опросов обновлены на: <b>{target_arg}</b>",
+                parse_mode="HTML",
             )
             return
 
@@ -253,7 +263,8 @@ async def cmd_admin(message: Message):
             target_id = await database.get_user_id_by_username(username)
             if not target_id:
                 await message.answer(
-                    f"❌ Пользователь <code>@{username}</code> не найден в базе данных.",
+                    f"❌ Пользователь <code>@{username}</code> "
+                    "не найден в базе данных.",
                     parse_mode="HTML",
                 )
                 return
@@ -282,7 +293,8 @@ async def cmd_admin(message: Message):
         elif sub_cmd == "reset":
             await database.reset_user_requests_today(target_id)
             await message.answer(
-                f"✅ Лимит для <code>{target_id}</code> сброшен.", parse_mode="HTML"
+                f"✅ Лимит для <code>{target_id}</code> сброшен.",
+                parse_mode="HTML",
             )
         elif sub_cmd == "block":
             limit_str = await database.get_setting(
@@ -291,16 +303,30 @@ async def cmd_admin(message: Message):
             current_limit = int(limit_str)
             await database.block_user_today(target_id, current_limit)
             await message.answer(
-                f"🛑 Лимит для <code>{target_id}</code> исчерпан (заблокирован до завтра).",
+                f"🛑 Лимит для <code>{target_id}</code> исчерпан "
+                "(заблокирован до завтра).",
                 parse_mode="HTML",
             )
         else:
             await message.answer(
-                "❓ Неизвестная команда.\nИспользование:\n/admin limit <id|@тег>\n/admin reset <id|@тег>\n/admin block <id|@тег>\n/admin setlimit <число>\n/admin schedule <часы>"
+                "❓ Неизвестная команда.\n"
+                "Использование:\n"
+                "/admin limit <id|@тег>\n"
+                "/admin reset <id|@тег>\n"
+                "/admin block <id|@тег>\n"
+                "/admin setlimit <число>\n"
+                "/admin schedule <часы>"
             )
     else:
         await message.answer(
-            "❓ Неверный формат команды.\nИспользование:\n/admin\n/admin limit <id|@тег>\n/admin reset <id|@тег>\n/admin block <id|@тег>\n/admin setlimit <число>\n/admin schedule <часы>"
+            "❓ Неверный формат команды.\n"
+            "Использование:\n"
+            "/admin\n"
+            "/admin limit <id|@тег>\n"
+            "/admin reset <id|@тег>\n"
+            "/admin block <id|@тег>\n"
+            "/admin setlimit <число>\n"
+            "/admin schedule <часы>"
         )
 
 
@@ -313,7 +339,11 @@ async def process_admin_stats(callback: CallbackQuery):
     stats = await database.get_stats_today()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_stats_back")]
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад", callback_data="admin_stats_back"
+                )
+            ]
         ]
     )
     await callback.message.edit_text(
@@ -339,11 +369,16 @@ async def process_admin_reset_confirm(callback: CallbackQuery):
                     text="✅ Да, сбросить всё", callback_data="admin_reset_all"
                 )
             ],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_stats_back")],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена", callback_data="admin_stats_back"
+                )
+            ],
         ]
     )
     await callback.message.edit_text(
-        "⚠️ <b>Вы уверены, что хотите сбросить лимиты ВСЕХ пользователей за сегодня?</b>",
+        "⚠️ <b>Вы уверены, что хотите сбросить лимиты "
+        "ВСЕХ пользователей за сегодня?</b>",
         reply_markup=keyboard,
         parse_mode="HTML",
     )
@@ -371,16 +406,23 @@ async def process_admin_stats_back(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
             [
                 InlineKeyboardButton(
-                    text="🔄 Сбросить все лимиты", callback_data="admin_reset_confirm"
+                    text="📊 Статистика", callback_data="admin_stats"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Сбросить все лимиты",
+                    callback_data="admin_reset_confirm",
                 )
             ],
         ]
     )
     await callback.message.edit_text(
-        "🛠 <b>Панель администратора</b>", reply_markup=keyboard, parse_mode="HTML"
+        "🛠 <b>Панель администратора</b>",
+        reply_markup=keyboard,
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -396,12 +438,18 @@ async def cmd_admin_help(message: Message):
         "Вы можете управлять лимитами и расписанием.\n\n"
         "📋 <b>Команды:</b>\n"
         "• <code>/admin</code> — Открыть меню (статистика, сброс всех).\n"
-        "• <code>/admin limit &lt;ID|@тег&gt;</code> — Посмотреть лимит конкретного пользователя.\n"
-        "• <code>/admin reset &lt;ID|@тег&gt;</code> — Сбросить лимит конкретного пользователя.\n"
-        "• <code>/admin block &lt;ID|@тег&gt;</code> — Завершить лимит (заблокировать на сегодня).\n"
-        "• <code>/admin setlimit &lt;число&gt;</code> — Изменить общий лимит для всех.\n"
-        "• <code>/admin schedule &lt;часы&gt;</code> — Изменить расписание опросов.\n"
-        "• <code>/admin topics &lt;темы&gt;</code> — Изменить список тем через запятую.\n"
+        "• <code>/admin limit &lt;ID|@тег&gt;</code> — Посмотреть "
+        "лимит пользователя.\n"
+        "• <code>/admin reset &lt;ID|@тег&gt;</code> — Сбросить "
+        "лимит пользователя.\n"
+        "• <code>/admin block &lt;ID|@тег&gt;</code> — Завершить "
+        "лимит (заблокировать).\n"
+        "• <code>/admin setlimit &lt;число&gt;</code> — Изменить "
+        "общий лимит для всех.\n"
+        "• <code>/admin schedule &lt;часы&gt;</code> — Изменить "
+        "расписание опросов.\n"
+        "• <code>/admin topics &lt;темы&gt;</code> — Изменить "
+        "список тем.\n"
         "• <code>/admin backup</code> — Скачать бэкап базы данных.\n\n"
         "💡 <i>Пример:</i> <code>/admin limit @nickname</code>",
         parse_mode="HTML",
@@ -417,7 +465,9 @@ def _is_bot_mentioned(message: Message) -> bool:
         return False
     for entity in message.entities:
         if entity.type == "mention":
-            mention_text = message.text[entity.offset : entity.offset + entity.length]
+            mention_text = message.text[
+                entity.offset: entity.offset + entity.length
+            ]
             if mention_text.lower() == f"@{BOT_USERNAME.lower()}":
                 return True
     return False
@@ -445,7 +495,9 @@ async def handle_chat_message(message: Message):
 
     # Проверяем лимит
     used = await database.get_user_requests_today(user_id)
-    limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+    limit_str = await database.get_setting(
+        "daily_limit", str(config.DAILY_USER_LIMIT)
+    )
     current_limit = int(limit_str)
 
     if used >= current_limit:
@@ -487,7 +539,10 @@ async def handle_chat_message(message: Message):
     remaining = current_limit - new_used
     footer = ""
     if remaining <= 5:
-        footer = f"\n\n⚠️ <i>Осталось сообщений: " f"{remaining}/{current_limit}</i>"
+        footer = (
+            f"\n\n⚠️ <i>Осталось сообщений: "
+            f"{remaining}/{current_limit}</i>"
+        )
 
     # Экранируем HTML-символы в ответе ИИ, чтобы Telegram не крашился
     safe_response = html.escape(response_text)
@@ -527,7 +582,9 @@ async def send_scheduled_poll():
 
     except Exception as e:
         logger.error("Ошибка при отправке опроса: %s", e)
-        await notify_admins(f"⚠️ <b>Ошибка отправки опроса:</b>\n<code>{e}</code>")
+        await notify_admins(
+            f"⚠️ <b>Ошибка отправки опроса:</b>\n<code>{e}</code>"
+        )
 
 
 # ========== ЗАПУСК ==========
@@ -561,7 +618,8 @@ async def setup_poll_jobs(scheduler: AsyncIOScheduler):
             replace_existing=True,
         )
         logger.info(
-            f"Опрос запланирован на {schedule['hour']:02d}:{schedule['minute']:02d} МСК"
+            f"Опрос запланирован на "
+            f"{schedule['hour']:02d}:{schedule['minute']:02d} МСК"
         )
 
 
@@ -593,7 +651,8 @@ async def main():
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.set_my_commands(
-                commands=admin_commands, scope=BotCommandScopeChat(chat_id=admin_id)
+                commands=admin_commands,
+                scope=BotCommandScopeChat(chat_id=admin_id),
             )
         except Exception:
             pass

@@ -3,7 +3,8 @@ import os
 from datetime import datetime, timezone
 
 DB_PATH = os.getenv(
-    "DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db")
+    "DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db"),
 )
 
 
@@ -59,11 +60,12 @@ async def init_db():
 async def get_user_requests_today(user_id: int) -> int:
     """Получить количество запросов пользователя за сегодня (по UTC)."""
     today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    query = (
+        "SELECT COUNT(*) FROM user_requests "
+        "WHERE user_id = ? AND timestamp >= ?"
+    )
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM user_requests WHERE user_id = ? AND timestamp >= ?",
-            (user_id, today_start),
-        )
+        cursor = await db.execute(query, (user_id, today_start))
         row = await cursor.fetchone()
         return row[0] if row else 0
 
@@ -82,21 +84,22 @@ async def add_user_request(user_id: int):
 async def add_poll(question: str, topic: str):
     """Сохранить отправленный опрос в историю."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    query = (
+        "INSERT INTO poll_history (question, topic, created_at) "
+        "VALUES (?, ?, ?)"
+    )
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO poll_history (question, topic, created_at) VALUES (?, ?, ?)",
-            (question, topic, now),
-        )
+        await db.execute(query, (question, topic, now))
         await db.commit()
 
 
 async def get_recent_polls(limit: int = 20) -> list[str]:
     """Получить последние N вопросов (для защиты от повторов)."""
+    query = (
+        "SELECT question FROM poll_history " "ORDER BY created_at DESC LIMIT ?"
+    )
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT question FROM poll_history ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        )
+        cursor = await db.execute(query, (limit,))
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
 
@@ -104,11 +107,12 @@ async def get_recent_polls(limit: int = 20) -> list[str]:
 async def get_stats_today() -> dict:
     """Получить статистику запросов за сегодня."""
     today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    query = (
+        "SELECT COUNT(DISTINCT user_id), COUNT(*) "
+        "FROM user_requests WHERE timestamp >= ?"
+    )
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT COUNT(DISTINCT user_id), COUNT(*) FROM user_requests WHERE timestamp >= ?",
-            (today_start,),
-        )
+        cursor = await db.execute(query, (today_start,))
         row = await cursor.fetchone()
         return {
             "users_count": row[0] if row else 0,
@@ -195,5 +199,7 @@ async def block_user_today(user_id: int, limit: int):
 
 async def get_poll_topics() -> list[str]:
     """Получить список тем для опросов из БД."""
-    topics_str = await get_setting("poll_topics", "история, кулинария, игры, кино")
+    topics_str = await get_setting(
+        "poll_topics", "история, кулинария, игры, кино"
+    )
     return [t.strip() for t in topics_str.split(",") if t.strip()]
