@@ -9,36 +9,32 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 # === ИИ Провайдер (настраивается через .env — без изменений кода) ===
 AI_API_KEY = os.getenv("AI_API_KEY")
-AI_BASE_URL = os.getenv("AI_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+AI_BASE_URL = os.getenv(
+    "AI_BASE_URL",
+    "https://openrouter.ai/api/v1/chat/completions"
+)
 AI_MODEL = os.getenv("AI_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 
 # === Лимиты ===
-DAILY_USER_LIMIT = 15  # Максимум сообщений к ИИ на одного пользователя в день
+DAILY_USER_LIMIT = int(os.getenv("DAILY_LIMIT", "15"))
 
 # === Темы для опросов ===
 POLL_TOPICS = ["история", "кулинария", "игры", "кино"]
 
 # === Расписание опросов (UTC) ===
-# 07:00 UTC = 10:00 МСК
-# 17:00 UTC = 20:00 МСК
-POLL_SCHEDULE = [
-    {"hour": 7, "minute": 0},
-    {"hour": 17, "minute": 0},
-]
+POLL_HOURS = os.getenv("POLL_HOURS", "07:00, 17:00")
+POLL_SCHEDULE = []
+try:
+    for h_m in POLL_HOURS.split(","):
+        if ":" in h_m:
+            h, m = h_m.strip().split(":")
+            POLL_SCHEDULE.append({"hour": int(h), "minute": int(m)})
+except Exception:
+    # Фолбек на случай ошибки парсинга
+    POLL_SCHEDULE = [{"hour": 7, "minute": 0}, {"hour": 17, "minute": 0}]
 
 # === Системный промпт для чата ===
-SYSTEM_PROMPT = (
-    "Ты — умный, дружелюбный и остроумный собеседник. "
-    "Отвечай на русском языке. Будь полезным, но добавляй лёгкий юмор. "
-    "Давай краткие и ёмкие ответы, если не просят подробности."
-    "На приветствия людей, отвечай ТОЛЬКО СТРОГО -'прив' символ в символ."
-    "Также на ВСЕ ПРОВОКАЦИОННЫЕ (негативные сообщения с оскорблениями) сообщения от пользователей отвечай -'ну прост'."
-)
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
 
 # === Системный промпт для генерации опросов ===
-POLL_SYSTEM_PROMPT = (
-    "Ты — генератор тем для горячих дискуссий и споров в чате. "
-    "Твоя задача — придумывать классические холивары, спорные утверждения и дилеммы на русском языке. "
-    "Вопрос должен звучать провокационно, с легкой долей юмора, чтобы вызвать желание проголосовать и поспорить. "
-    "Варианты ответов должны отражать разные точки зрения (противоположные стороны)."
-)
+POLL_SYSTEM_PROMPT = os.getenv("POLL_SYSTEM_PROMPT",)

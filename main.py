@@ -120,7 +120,7 @@ def _is_bot_mentioned(message: Message) -> bool:
     for entity in message.entities:
         if entity.type == "mention":
             mention_text = message.text[
-                entity.offset : entity.offset + entity.length
+                entity.offset: entity.offset + entity.length
             ]
             if mention_text.lower() == f"@{BOT_USERNAME.lower()}":
                 return True

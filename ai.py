@@ -30,7 +30,10 @@ async def close_client():
         _http_client = None
 
 
-async def _call_ai(messages: list[dict], temperature: float = 0.8) -> str | None:
+async def _call_ai(
+    messages: list[dict],
+    temperature: float = 0.8
+) -> str | None:
     """
     Универсальный вызов OpenAI-совместимого API.
     Работает с любым провайдером: OpenRouter, Gemini, OpenAI и др.
@@ -71,7 +74,10 @@ async def _call_ai(messages: list[dict], temperature: float = 0.8) -> str | None
         return None
 
 
-async def generate_poll(topic: str, recent_questions: list[str]) -> dict | None:
+async def generate_poll(
+    topic: str,
+    recent_questions: list[str]
+) -> dict | None:
     """
     Генерирует вопрос для горячей дискуссии.
 
