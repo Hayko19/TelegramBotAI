@@ -127,16 +127,29 @@ async def cmd_admin(message: Message):
     if message.from_user.id not in config.ADMIN_IDS:
         return  # Игнорируем обычных пользователей
 
-    args = message.text.split()
+    # Используем maxsplit=2, чтобы аргументы с пробелами (например, расписание) не ломались
+    args = message.text.split(None, 2)
+    
     if len(args) == 1:
         # Главное меню админки
+        limit = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+        schedule = await database.get_setting("poll_hours", config.POLL_HOURS)
+
+        msg_text = (
+            "🛠 <b>Панель администратора</b>\n\n"
+            f"📊 <b>Текущие настройки:</b>\n"
+            f"• Дневной лимит ИИ: <code>{limit}</code>\n"
+            f"• Расписание опросов: <code>{schedule}</code>\n\n"
+            "Управляйте настройками кнопками или командами (см. <code>/adminhelp</code>)."
+        )
+
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
                 [InlineKeyboardButton(text="🔄 Сбросить все лимиты", callback_data="admin_reset_confirm")],
             ]
         )
-        await message.answer("🛠 <b>Панель администратора</b>", reply_markup=keyboard, parse_mode="HTML")
+        await message.answer(msg_text, reply_markup=keyboard, parse_mode="HTML")
     elif len(args) == 3:
         sub_cmd = args[1].lower()
         target_arg = args[2]
@@ -153,6 +166,17 @@ async def cmd_admin(message: Message):
 
         # 2. Расписание опросов
         if sub_cmd == "schedule":
+            # Валидация: формат HH:MM, HH:MM
+            import re
+            time_pattern = re.compile(r'^(\d{2}:\d{2})(,\s*\d{2}:\d{2})*$')
+            if not time_pattern.match(target_arg.strip()):
+                await message.answer(
+                    "❌ Неверный формат времени.\n"
+                    "Пример: <code>09:00, 15:30</code>",
+                    parse_mode="HTML"
+                )
+                return
+
             await database.set_setting("poll_hours", target_arg)
             await message.answer(f"✅ Расписание опросов обновлено на <b>{target_arg}</b>", parse_mode="HTML")
             if scheduler:
@@ -196,6 +220,8 @@ async def cmd_admin(message: Message):
             await message.answer(f"🛑 Лимит для <code>{target_id}</code> исчерпан (заблокирован до завтра).", parse_mode="HTML")
         else:
             await message.answer("❓ Неизвестная команда.\nИспользование:\n/admin limit <id|@тег>\n/admin reset <id|@тег>\n/admin block <id|@тег>\n/admin setlimit <число>\n/admin schedule <часы>")
+    else:
+        await message.answer("❓ Неверный формат команды.\nИспользование:\n/admin\n/admin limit <id|@тег>\n/admin reset <id|@тег>\n/admin block <id|@тег>\n/admin setlimit <число>\n/admin schedule <часы>")
 
 
 
