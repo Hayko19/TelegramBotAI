@@ -470,12 +470,12 @@ async def setup_poll_jobs(scheduler: AsyncIOScheduler):
             CronTrigger(
                 hour=schedule["hour"],
                 minute=schedule["minute"],
-                timezone="UTC",
+                timezone="Europe/Moscow",
             ),
             id=f"poll_{schedule['hour']}_{schedule['minute']}",
             replace_existing=True,
         )
-        logger.info(f"Опрос запланирован на {schedule['hour']:02d}:{schedule['minute']:02d} UTC")
+        logger.info(f"Опрос запланирован на {schedule['hour']:02d}:{schedule['minute']:02d} МСК")
 
 
 async def main():
@@ -494,7 +494,7 @@ async def main():
     global scheduler
 
     # Настройка планировщика
-    scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     await setup_poll_jobs(scheduler)
 
 
