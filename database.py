@@ -2,11 +2,14 @@ import aiosqlite
 import os
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db")
-
+DB_PATH = os.getenv(
+    "DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db")
+)
 
 async def init_db():
     """Создание таблиц при первом запуске."""
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS user_requests (
