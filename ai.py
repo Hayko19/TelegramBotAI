@@ -117,9 +117,12 @@ async def generate_poll(
 
     try:
         clean = text.strip()
-        if clean.startswith("```"):
-            lines = clean.split("\n")
-            clean = "\n".join(lines[1:-1]).strip()
+        
+        # Извлекаем только блок JSON {...} на случай, если ИИ написал текст вокруг
+        start = clean.find("{")
+        end = clean.rfind("}")
+        if start != -1 and end != -1:
+            clean = clean[start : end + 1]
 
         data = json.loads(clean)
 

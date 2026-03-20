@@ -525,6 +525,11 @@ async def handle_chat_message(message: Message):
     # Генерируем ответ
     response_text = await ai.chat_response(clean_text, history)
 
+    if response_text.startswith("⚠️"):
+        await notify_admins(
+            f"⚠️ <b>Сбой ИИ у пользователя:</b> <code>{user_id}</code>"
+        )
+
     # Сохраняем в историю (ограничиваем 20 записей — 10 пар)
     chat_histories[user_id].append({"role": "user", "text": clean_text})
     chat_histories[user_id].append({"role": "model", "text": response_text})
