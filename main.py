@@ -552,6 +552,7 @@ async def handle_chat_message(message: Message):
     # Экранируем HTML-символы в ответе ИИ, чтобы Telegram не крашился
     safe_response = html.escape(response_text)
     safe_response = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", safe_response)
+    safe_response = re.sub(r"\*(.*?)\*", r"<i>\1</i>", safe_response)
     await message.answer(safe_response + footer, parse_mode="HTML")
 
 
