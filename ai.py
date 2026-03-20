@@ -111,34 +111,36 @@ async def generate_poll(
         {"role": "user", "content": prompt},
     ]
 
-    text = await _call_ai(messages, temperature=0.9)
-    if text is None:
-        return None
+    for attempt in range(2):
+        logger.info(f"Генерация опроса: попытка {attempt + 1}/2")
+        text = await _call_ai(messages, temperature=0.8)
+        if text is None:
+            continue
 
-    try:
-        clean = text.strip()
-        
-        # Извлекаем только блок JSON {...} на случай, если ИИ написал текст вокруг
-        start = clean.find("{")
-        end = clean.rfind("}")
-        if start != -1 and end != -1:
-            clean = clean[start : end + 1]
+        try:
+            clean = text.strip()
 
-        data = json.loads(clean)
+            # Извлекаем только блок JSON {...} на случай, если ИИ написал текст вокруг
+            start = clean.find("{")
+            end = clean.rfind("}")
+            if start != -1 and end != -1:
+                clean = clean[start : end + 1]
 
-        if (
-            "question" in data
-            and "options" in data
-            and 2 <= len(data["options"]) <= 4
-        ):
-            return data
-        else:
-            logger.error("Некорректная структура ответа: %s", data)
-            return None
+            data = json.loads(clean)
 
-    except json.JSONDecodeError as e:
-        logger.error("Ошибка парсинга JSON: %s | Текст: %s", e, text)
-        return None
+            if (
+                "question" in data
+                and "options" in data
+                and 2 <= len(data["options"]) <= 4
+            ):
+                return data
+            else:
+                logger.error("Некорректная структура ответа (попытка %d): %s", attempt + 1, data)
+
+        except json.JSONDecodeError as e:
+            logger.error("Ошибка парсинга JSON (попытка %d): %s", attempt + 1, e)
+
+    return None
 
 
 async def chat_response(
