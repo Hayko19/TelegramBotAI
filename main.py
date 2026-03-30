@@ -580,20 +580,71 @@ async def process_admin_active_users(callback: CallbackQuery):
         await callback.answer("Сегодня еще никто не писал боту.", show_alert=True)
         return
         
-    text = "👥 <b>Самые активные сегодня (Топ-10):</b>\n\n"
+    text = "👥 <b>Самые активные сегодня (Топ-10):</b>\n\n Выберите пользователя для управления:"
+    
+    inline_keyboard = []
     
     for i, u in enumerate(users, 1):
         username_str = f"@{u['username']}" if u['username'] else f"{u['user_id']}"
-        text += f"{i}. {username_str} — {u['count']} запросов\n"
+        btn_text = f"{i}. {username_str} — {u['count']} зап."
+        inline_keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_user_manage_{u['user_id']}")])
         
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_stats")]
-        ]
-    )
+    inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_stats")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
     
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
+
+@dp.callback_query(F.data.startswith("admin_user_manage_"))
+async def process_admin_user_manage(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    
+    target_id = int(callback.data.split("_")[3])
+    user_display = await get_user_display(target_id)
+    used = await database.get_user_requests_today(target_id)
+    limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+    current_limit = int(limit_str)
+    remaining = max(0, current_limit - used)
+
+    text = (
+        f"👤 <b>Пользователь:</b> {user_display}\n"
+        f"Использовано сегодня: {used}/{current_limit}\n"
+        f"Остаток: <b>{remaining}</b>\n\n"
+        "Выберите действие:"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Сбросить лимит", callback_data=f"admin_user_reset_{target_id}"),
+                InlineKeyboardButton(text="🛑 Блок (на сегодня)", callback_data=f"admin_user_block_{target_id}")
+            ],
+            [InlineKeyboardButton(text="⬅️ Одобрить", callback_data=f"admin_approve_{target_id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_{target_id}")],
+            [InlineKeyboardButton(text="⬅️ К списку юзеров", callback_data="admin_active_users")]
+        ]
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("admin_user_reset_"))
+async def process_admin_user_reset_cb(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    target_id = int(callback.data.split("_")[3])
+    await database.reset_user_requests_today(target_id)
+    await callback.answer("✅ Лимит сброшен", show_alert=True)
+    await process_admin_user_manage(callback)
+
+@dp.callback_query(F.data.startswith("admin_user_block_"))
+async def process_admin_user_block_cb(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    target_id = int(callback.data.split("_")[3])
+    limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+    await database.block_user_today(target_id, int(limit_str))
+    await callback.answer("🛑 Пользователь заблокирован до завтра", show_alert=True)
+    await process_admin_user_manage(callback)
 
 
 @dp.callback_query(F.data == "admin_settings")
@@ -957,7 +1008,6 @@ async def main():
 
     # ⬇️ НАСТРОЙКА МЕНЮ КОМАНД ⬇️
     user_commands = [
-        BotCommand(command="start", description="Запуск бота"),
         BotCommand(command="help", description="Справка"),
         BotCommand(command="limit", description="Проверить лимит"),
     ]
