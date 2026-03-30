@@ -35,10 +35,17 @@ async def init_db():
             """
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
-                username TEXT
+                username TEXT,
+                is_approved INTEGER DEFAULT 1,
+                request_sent INTEGER DEFAULT 0
             )
         """
         )
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN is_approved INTEGER DEFAULT 1")
+            await db.execute("ALTER TABLE users ADD COLUMN request_sent INTEGER DEFAULT 0")
+        except Exception:
+            pass
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS settings (
@@ -119,6 +126,27 @@ async def get_stats_today() -> dict:
             "requests_count": row[1] if row else 0,
         }
 
+async def get_active_users_list_today(limit: int = 10) -> list[dict]:
+    """Получить список самых активных пользователей за сегодня."""
+    today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    query = """
+        SELECT r.user_id, u.username, COUNT(r.id) as req_count 
+        FROM user_requests r
+        LEFT JOIN users u ON r.user_id = u.user_id
+        WHERE r.timestamp >= ?
+        GROUP BY r.user_id
+        ORDER BY req_count DESC
+        LIMIT ?
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(query, (today_start, limit))
+        rows = await cursor.fetchall()
+        
+    return [
+        {"user_id": row[0], "username": row[1], "count": row[2]}
+        for row in rows
+    ]
+
 
 async def reset_all_requests_today():
     """Сбросить лимиты (удалить запросы) всех пользователей за сегодня."""
@@ -143,12 +171,36 @@ async def reset_user_requests_today(user_id: int):
 
 
 async def save_user(user_id: int, username: str | None):
-    """Записать или обновить юзернейм пользователя."""
+    """Записать или обновить юзернейм пользователя (устарело, лучше использовать create_or_get_user)."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO users (user_id, username) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO users (user_id, username, is_approved, request_sent) VALUES (?, ?, 0, 0)",
             (user_id, username if username else None),
         )
+        await db.execute(
+            "UPDATE users SET username = ? WHERE user_id = ?",
+            (username if username else None, user_id),
+        )
+        await db.commit()
+
+async def create_or_get_user(user_id: int, username: str | None) -> tuple[int, int]:
+    """Создает пользователя (pending=0) или возвращает его текущий статус (is_approved, request_sent)."""
+    await save_user(user_id, username)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT is_approved, request_sent FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return row if row else (0, 0)
+
+async def update_user_approval(user_id: int, is_approved: int):
+    """Обновить статус одобрения пользователя (1 = одобрен, 0 = ожидает, -1 = отклонен)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET is_approved = ? WHERE user_id = ?", (is_approved, user_id))
+        await db.commit()
+
+async def update_user_request_sent(user_id: int, request_sent: int):
+    """Отметить, был ли запрос администраторам уже отправлен."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET request_sent = ? WHERE user_id = ?", (request_sent, user_id))
         await db.commit()
 
 
@@ -158,6 +210,17 @@ async def get_user_id_by_username(username: str) -> int | None:
         cursor = await db.execute(
             "SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)",
             (username,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def get_username_by_user_id(user_id: int) -> str | None:
+    """Найти username по user_id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT username FROM users WHERE user_id = ?",
+            (user_id,),
         )
         row = await cursor.fetchone()
         return row[0] if row else None

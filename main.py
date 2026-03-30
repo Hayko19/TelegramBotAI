@@ -4,11 +4,15 @@ import asyncio
 import html
 import logging
 import re
+import time
 from collections import defaultdict
+from typing import Callable, Dict, Any, Awaitable
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.enums import ChatType
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
@@ -36,6 +40,42 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
+class ThrottlingMiddleware(BaseMiddleware):
+    """Антифлуд мидлварь. Игнорирует сообщения, если они приходят слишком быстро."""
+    def __init__(self, limit: float = 3.0):
+        self.limit = limit
+        self.users_cache: Dict[int, float] = {}
+        super().__init__()
+
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any]
+    ) -> Any:
+        if not isinstance(event, Message):
+            return await handler(event, data)
+            
+        # Админов не ограничиваем
+        if event.from_user and event.from_user.id in config.ADMIN_IDS:
+            return await handler(event, data)
+
+        if event.from_user:
+            user_id = event.from_user.id
+            now = time.time()
+            last_time = self.users_cache.get(user_id, 0.0)
+
+            if (now - last_time) < self.limit:
+                # Превышен лимит сообщений в секунду, тихо игнорируем
+                return
+
+            self.users_cache[user_id] = now
+
+        return await handler(event, data)
+
+# Подключаем мидлварь к обработчику сообщений
+dp.message.middleware(ThrottlingMiddleware(limit=3.0))
+
 # Хранилище истории диалогов (в памяти, сбрасывается при перезапуске)
 # {user_id: [{"role": "user"/"model", "text": "..."}]}
 chat_histories: dict[int, list[dict]] = defaultdict(list)
@@ -56,13 +96,61 @@ async def notify_admins(text: str):
             logger.warning(f"Ошибка уведомления админа {admin_id}: {e}")
 
 
+async def check_access(message: Message) -> bool:
+    """Проверяет доступ пользователя."""
+    if message.from_user.id in config.ADMIN_IDS:
+        return True
+
+    user_id = message.from_user.id
+    username = message.from_user.username
+    is_approved, request_sent = await database.create_or_get_user(user_id, username)
+    
+    if is_approved == 1:
+        return True
+        
+    is_private = message.chat.type == ChatType.PRIVATE
+    if not is_private:
+        return False
+        
+    if is_approved == -1:
+        return False
+        
+    if is_approved == 0:
+        if request_sent == 0:
+            await message.answer("⏳ <b>Ваш аккаунт ожидает подтверждения администратором.</b>\nМы уведомим вас, когда доступ будет открыт.", parse_mode="HTML")
+            
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_approve_{user_id}"),
+                        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_{user_id}")
+                    ]
+                ]
+            )
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"👤 <b>Новая заявка!</b>\nПользователь: <code>{user_id}</code> (@{username or 'без_тега'})\nЗапрашивает доступ к боту.",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.warning(f"Ошибка уведомления админа {admin_id}: {e}")
+            
+            await database.update_user_request_sent(user_id, 1)
+        return False
+    return False
+
+
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Приветствие при первом запуске."""
-    await database.save_user(message.from_user.id, message.from_user.username)
+    if not await check_access(message):
+        return
     await message.answer(
         "👋 <b>Привет!</b> Я — бот для дискуссий.\n\n"
         "🧠 <b>Что я умею:</b>\n"
@@ -82,7 +170,8 @@ async def cmd_start(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     """Подробная помощь."""
-    await database.save_user(message.from_user.id, message.from_user.username)
+    if not await check_access(message):
+        return
     topics = await database.get_poll_topics()
     topics_text = ", ".join(f"«{t}»" for t in topics)
     await message.answer(
@@ -108,7 +197,8 @@ async def cmd_help(message: Message):
 @dp.message(Command("limit"))
 async def cmd_limit(message: Message):
     """Показывает оставшийся лимит запросов."""
-    await database.save_user(message.from_user.id, message.from_user.username)
+    if not await check_access(message):
+        return
     used = await database.get_user_requests_today(message.from_user.id)
     remaining = max(0, config.DAILY_USER_LIMIT - used)
     total = config.DAILY_USER_LIMIT
@@ -135,17 +225,63 @@ async def cmd_limit(message: Message):
         )
 
 
+async def get_user_display(user_id: int) -> str:
+    username = await database.get_username_by_user_id(user_id)
+    if username:
+        return f"<code>{user_id}</code> (@{username})"
+    return f"<code>{user_id}</code>"
+
+
+# ========== СОСТОЯНИЯ АДМИНА ==========
+class AdminStates(StatesGroup):
+    waiting_for_limit = State()
+    waiting_for_schedule = State()
+    waiting_for_topics = State()
+    waiting_for_user_search = State()
+
 # ========== ОБРАБОТЧИКИ АДМИН-ПАНЕЛИ ==========
+
+def _get_admin_main_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
+                InlineKeyboardButton(text="👥 Кто сегодня?", callback_data="admin_active_users")
+            ],
+            [
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings"),
+                InlineKeyboardButton(text="💾 Бэкап", callback_data="admin_backup")
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Сбросить всё (опасно)", callback_data="admin_reset_confirm")
+            ]
+        ]
+    )
+
+def _get_admin_settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📉 Лимит", callback_data="admin_set_limit"),
+                InlineKeyboardButton(text="📝 Темы", callback_data="admin_set_topics"),
+            ],
+            [
+                InlineKeyboardButton(text="🕒 Расписание", callback_data="admin_set_schedule")
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ В главное меню", callback_data="admin_main_menu")
+            ]
+        ]
+    )
 
 
 @dp.message(Command("admin"))
-async def cmd_admin(message: Message):
+async def cmd_admin(message: Message, state: FSMContext):
     """Панель администратора."""
     if message.from_user.id not in config.ADMIN_IDS:
-        return  # Игнорируем обычных пользователей
+        return
 
-    # Используем maxsplit=2, чтобы аргументы с пробелами
-    # (например, расписание) не ломались
+    await state.clear()
     args = message.text.split(None, 2)
 
     if len(args) == 1:
@@ -164,27 +300,11 @@ async def cmd_admin(message: Message):
             f"• Дневной лимит ИИ: <code>{limit}</code>\n"
             f"• Расписание опросов: <code>{schedule}</code>\n"
             f"• Темы опросов: <code>{topics}</code>\n\n"
-            "Управляйте настройками кнопками или "
-            "командами (см. <code>/adminhelp</code>)."
+            "Выберите действие в меню ниже:"
         )
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📊 Статистика", callback_data="admin_stats"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔄 Сбросить все лимиты",
-                        callback_data="admin_reset_confirm",
-                    )
-                ],
-            ]
-        )
         await message.answer(
-            msg_text, reply_markup=keyboard, parse_mode="HTML"
+            msg_text, reply_markup=_get_admin_main_keyboard(), parse_mode="HTML"
         )
     elif len(args) == 2:
         sub_cmd = args[1].lower()
@@ -277,6 +397,7 @@ async def cmd_admin(message: Message):
                 )
                 return
 
+        user_display = await get_user_display(target_id)
         if sub_cmd == "limit":
             used = await database.get_user_requests_today(target_id)
             limit_str = await database.get_setting(
@@ -285,7 +406,7 @@ async def cmd_admin(message: Message):
             current_limit = int(limit_str)
             remaining = max(0, current_limit - used)
             await message.answer(
-                f"👤 <b>Пользователь</b> <code>{target_id}</code>\n"
+                f"👤 <b>Пользователь</b> {user_display}\n"
                 f"Использовано: {used}/{current_limit}\n"
                 f"Осталось: <b>{remaining}</b>",
                 parse_mode="HTML",
@@ -293,7 +414,7 @@ async def cmd_admin(message: Message):
         elif sub_cmd == "reset":
             await database.reset_user_requests_today(target_id)
             await message.answer(
-                f"✅ Лимит для <code>{target_id}</code> сброшен.",
+                f"✅ Лимит для {user_display} сброшен.",
                 parse_mode="HTML",
             )
         elif sub_cmd == "block":
@@ -303,10 +424,24 @@ async def cmd_admin(message: Message):
             current_limit = int(limit_str)
             await database.block_user_today(target_id, current_limit)
             await message.answer(
-                f"🛑 Лимит для <code>{target_id}</code> исчерпан "
+                f"🛑 Лимит для {user_display} исчерпан "
                 "(заблокирован до завтра).",
                 parse_mode="HTML",
             )
+        elif sub_cmd == "approve":
+            await database.update_user_approval(target_id, 1)
+            await message.answer(f"✅ Пользователь {user_display} одобрен.", parse_mode="HTML")
+            try:
+                await bot.send_message(target_id, "✅ Ваш доступ разблокирован! Вы можете общаться с ботом.")
+            except Exception:
+                pass
+        elif sub_cmd == "reject":
+            await database.update_user_approval(target_id, -1)
+            await message.answer(f"❌ Пользователь {user_display} отклонен.", parse_mode="HTML")
+            try:
+                await bot.send_message(target_id, "❌ Администратор отклонил вашу заявку.")
+            except Exception:
+                pass
         else:
             await message.answer(
                 "❓ Неизвестная команда.\n"
@@ -314,6 +449,8 @@ async def cmd_admin(message: Message):
                 "/admin limit <id|@тег>\n"
                 "/admin reset <id|@тег>\n"
                 "/admin block <id|@тег>\n"
+                "/admin approve <id|@тег>\n"
+                "/admin reject <id|@тег>\n"
                 "/admin setlimit <число>\n"
                 "/admin schedule <часы>"
             )
@@ -341,7 +478,12 @@ async def process_admin_stats(callback: CallbackQuery):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="⬅️ Назад", callback_data="admin_stats_back"
+                    text="👥 Кто сегодня?", callback_data="admin_active_users"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад", callback_data="admin_main_menu"
                 )
             ]
         ]
@@ -371,7 +513,7 @@ async def process_admin_reset_confirm(callback: CallbackQuery):
             ],
             [
                 InlineKeyboardButton(
-                    text="❌ Отмена", callback_data="admin_stats_back"
+                    text="❌ Отмена", callback_data="admin_main_menu"
                 )
             ],
         ]
@@ -398,32 +540,199 @@ async def process_admin_reset_all(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.callback_query(F.data == "admin_stats_back")
-async def process_admin_stats_back(callback: CallbackQuery):
+@dp.callback_query(F.data == "admin_main_menu")
+async def process_admin_main_menu(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         await callback.answer("🔒 Доступ запрещен", show_alert=True)
         return
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📊 Статистика", callback_data="admin_stats"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔄 Сбросить все лимиты",
-                    callback_data="admin_reset_confirm",
-                )
-            ],
-        ]
+    await state.clear()
+    limit = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
+    schedule = await database.get_setting("poll_hours", config.POLL_HOURS)
+    topics = await database.get_setting("poll_topics", "история, кулинария, игры, кино")
+
+    msg_text = (
+        "🛠 <b>Панель администратора</b>\n\n"
+        f"📊 <b>Текущие настройки:</b>\n"
+        f"• Дневной лимит ИИ: <code>{limit}</code>\n"
+        f"• Расписание опросов: <code>{schedule}</code>\n"
+        f"• Темы опросов: <code>{topics}</code>\n\n"
+        "Выберите действие в меню ниже:"
     )
+
     await callback.message.edit_text(
-        "🛠 <b>Панель администратора</b>",
-        reply_markup=keyboard,
+        msg_text,
+        reply_markup=_get_admin_main_keyboard(),
         parse_mode="HTML",
     )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_active_users")
+async def process_admin_active_users(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+
+    users = await database.get_active_users_list_today(limit=10)
+    
+    if not users:
+        await callback.answer("Сегодня еще никто не писал боту.", show_alert=True)
+        return
+        
+    text = "👥 <b>Самые активные сегодня (Топ-10):</b>\n\n"
+    
+    for i, u in enumerate(users, 1):
+        username_str = f"@{u['username']}" if u['username'] else f"{u['user_id']}"
+        text += f"{i}. {username_str} — {u['count']} запросов\n"
+        
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_stats")]
+        ]
+    )
+    
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_settings")
+async def process_admin_settings(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+        
+    await callback.message.edit_text(
+        "⚙️ <b>Настройки</b>\n\n"
+        "Что вы хотите изменить?",
+        parse_mode="HTML",
+        reply_markup=_get_admin_settings_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_backup")
+async def process_admin_backup(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+
+    from aiogram.types import FSInputFile
+    try:
+        db_file = FSInputFile(database.DB_PATH, filename="bot_data.db")
+        await callback.message.answer_document(
+            db_file, caption="💾 Бэкап базы данных (SQLite)"
+        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка выгрузки бэкапа: {e}")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_set_limit")
+async def process_admin_set_limit(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    await state.set_state(AdminStates.waiting_for_limit)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_settings")]])
+    await callback.message.edit_text("Отправьте новое числовое значение для дневного лимита ИИ (число):", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_set_schedule")
+async def process_admin_set_schedule(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    await state.set_state(AdminStates.waiting_for_schedule)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_settings")]])
+    await callback.message.edit_text("Отправьте новое расписание опросов.\nПример: <code>09:30, 18:00</code>", parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_set_topics")
+async def process_admin_set_topics(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    await state.set_state(AdminStates.waiting_for_topics)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_settings")]])
+    await callback.message.edit_text("Отправьте новые темы опросов через запятую.\nПример: <code>наука, спорт, музыка</code>", parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.message(AdminStates.waiting_for_limit)
+async def admin_save_limit(message: Message, state: FSMContext):
+    try:
+        val = int(message.text.strip())
+        await database.set_setting("daily_limit", str(val))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В настройки", callback_data="admin_settings")]])
+        await message.answer(f"✅ Общий лимит установлен на <b>{val}</b>", parse_mode="HTML", reply_markup=keyboard)
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Лимит должен быть целым числом. Попробуйте еще раз или нажмите Отмена.")
+
+@dp.message(AdminStates.waiting_for_schedule)
+async def admin_save_schedule(message: Message, state: FSMContext):
+    time_pattern = re.compile(r"^(\d{2}:\d{2})(,\s*\d{2}:\d{2})*$")
+    target_arg = message.text.strip()
+    if not time_pattern.match(target_arg):
+        await message.answer("❌ Неверный формат времени.\nПример: <code>09:00, 15:30</code>", parse_mode="HTML")
+        return
+
+    await database.set_setting("poll_hours", target_arg)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В настройки", callback_data="admin_settings")]])
+    await message.answer(f"✅ Расписание опросов обновлено на <b>{target_arg}</b>", parse_mode="HTML", reply_markup=keyboard)
+    if scheduler:
+        await setup_poll_jobs(scheduler)
+    await state.clear()
+
+@dp.message(AdminStates.waiting_for_topics)
+async def admin_save_topics(message: Message, state: FSMContext):
+    target_arg = message.text.strip()
+    if not target_arg:
+        await message.answer("❌ Темы не могут быть пустыми. Напишите темы через запятую.")
+        return
+
+    await database.set_setting("poll_topics", target_arg)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В настройки", callback_data="admin_settings")]])
+    await message.answer(f"✅ Темы опросов обновлены на: <b>{target_arg}</b>", parse_mode="HTML", reply_markup=keyboard)
+    await state.clear()
+
+
+@dp.callback_query(F.data.startswith("admin_approve_"))
+async def process_admin_approve(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[2])
+    await database.update_user_approval(user_id, 1)
+    
+    await callback.message.edit_text(
+        callback.message.html_text + "\n\n<b>✅ Одобрено</b>",
+        parse_mode="HTML",
+        reply_markup=None
+    )
+    
+    try:
+        await bot.send_message(user_id, "✅ Ваш доступ разблокирован! Теперь вы можете общаться с ботом.")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_reject_"))
+async def process_admin_reject(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+        
+    user_id = int(callback.data.split("_")[2])
+    await database.update_user_approval(user_id, -1)
+    
+    await callback.message.edit_text(
+        callback.message.html_text + "\n\n<b>❌ Отклонено</b>",
+        parse_mode="HTML",
+        reply_markup=None
+    )
+    
+    try:
+        await bot.send_message(user_id, "❌ Администратор отклонил вашу заявку.")
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -444,6 +753,8 @@ async def cmd_admin_help(message: Message):
         "лимит пользователя.\n"
         "• <code>/admin block &lt;ID|@тег&gt;</code> — Завершить "
         "лимит (заблокировать).\n"
+        "• <code>/admin approve &lt;ID|@тег&gt;</code> — Одобрить доступ к боту.\n"
+        "• <code>/admin reject &lt;ID|@тег&gt;</code> — Отклонить доступ к боту.\n"
         "• <code>/admin setlimit &lt;число&gt;</code> — Изменить "
         "общий лимит для всех.\n"
         "• <code>/admin schedule &lt;часы&gt;</code> — Изменить "
@@ -483,9 +794,10 @@ def _is_reply_to_bot(message: Message) -> bool:
 @dp.message(F.text)
 async def handle_chat_message(message: Message):
     """Обработка текстовых сообщений — чат с ИИ."""
+    if not await check_access(message):
+        return
     user_id = message.from_user.id
     user_text = message.text
-    await database.save_user(user_id, message.from_user.username)
 
     # В групповых чатах отвечаем только если бот упомянут или ему reply
     is_private = message.chat.type == ChatType.PRIVATE
@@ -526,8 +838,9 @@ async def handle_chat_message(message: Message):
     response_text = await ai.chat_response(clean_text, history)
 
     if response_text.startswith("⚠️"):
+        user_display = await get_user_display(user_id)
         await notify_admins(
-            f"⚠️ <b>Сбой ИИ у пользователя:</b> <code>{user_id}</code>"
+            f"⚠️ <b>Сбой ИИ у пользователя:</b> {user_display}"
         )
 
     # Сохраняем в историю (ограничиваем 20 записей — 10 пар)
