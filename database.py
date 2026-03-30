@@ -197,6 +197,13 @@ async def update_user_approval(user_id: int, is_approved: int):
         await db.execute("UPDATE users SET is_approved = ? WHERE user_id = ?", (is_approved, user_id))
         await db.commit()
 
+async def get_user_approval(user_id: int) -> int:
+    """Получить статус одобрения: 1=Одобрен, 0=Новый, -1=Отклонен."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT is_approved FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
 async def update_user_request_sent(user_id: int, request_sent: int):
     """Отметить, был ли запрос администраторам уже отправлен."""
     async with aiosqlite.connect(DB_PATH) as db:

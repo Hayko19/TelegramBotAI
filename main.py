@@ -597,7 +597,7 @@ async def process_admin_active_users(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("admin_user_manage_"))
 async def process_admin_user_manage(callback: CallbackQuery):
-    if callback.from_user.id not in config.ADMIN_IDS:
+    if callback.fromuser and callback.from_user.id not in config.ADMIN_IDS:
         return
     
     target_id = int(callback.data.split("_")[3])
@@ -606,26 +606,69 @@ async def process_admin_user_manage(callback: CallbackQuery):
     limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
     current_limit = int(limit_str)
     remaining = max(0, current_limit - used)
+    is_approved = await database.get_user_approval(target_id)
+
+    status_str = "⏳ <b>Ожидает</b>"
+    if is_approved == 1:
+        status_str = "✅ <b>Одобрен</b>"
+    elif is_approved == -1:
+        status_str = "❌ <b>Забанен (Навсегда)</b>"
 
     text = (
         f"👤 <b>Пользователь:</b> {user_display}\n"
+        f"Статус доступа: {status_str}\n"
         f"Использовано сегодня: {used}/{current_limit}\n"
         f"Остаток: <b>{remaining}</b>\n\n"
         "Выберите действие:"
     )
 
+    top_buttons = [
+        InlineKeyboardButton(text="🔄 Сбросить лимит", callback_data=f"admin_user_reset_{target_id}"),
+        InlineKeyboardButton(text="🛑 Блок (на сегодня)", callback_data=f"admin_user_block_{target_id}")
+    ]
+
+    approval_buttons = []
+    if is_approved == 1:
+        approval_buttons = [InlineKeyboardButton(text="⛔️ Отозвать доступ навсегда", callback_data=f"admin_user_reject_{target_id}")]
+    elif is_approved == -1:
+        approval_buttons = [InlineKeyboardButton(text="✅ Вернуть доступ", callback_data=f"admin_user_approve_{target_id}")]
+    else:
+        approval_buttons = [
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_user_approve_{target_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_user_reject_{target_id}")
+        ]
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔄 Сбросить лимит", callback_data=f"admin_user_reset_{target_id}"),
-                InlineKeyboardButton(text="🛑 Блок (на сегодня)", callback_data=f"admin_user_block_{target_id}")
-            ],
-            [InlineKeyboardButton(text="⬅️ Одобрить", callback_data=f"admin_approve_{target_id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_{target_id}")],
+            top_buttons,
+            approval_buttons,
             [InlineKeyboardButton(text="⬅️ К списку юзеров", callback_data="admin_active_users")]
         ]
     )
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
+
+@dp.callback_query(F.data.startswith("admin_user_approve_"))
+async def process_admin_user_approve_cb(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    target_id = int(callback.data.split("_")[3])
+    await database.update_user_approval(target_id, 1)
+    await callback.answer("✅ Доступ выдан!", show_alert=True)
+    try:
+        await bot.send_message(target_id, "✅ Ваш доступ разблокирован! Теперь вы можете общаться с ботом.")
+    except Exception:
+        pass
+    await process_admin_user_manage(callback)
+
+@dp.callback_query(F.data.startswith("admin_user_reject_"))
+async def process_admin_user_reject_cb(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    target_id = int(callback.data.split("_")[3])
+    await database.update_user_approval(target_id, -1)
+    await callback.answer("❌ Доступ отозван!", show_alert=True)
+    await process_admin_user_manage(callback)
 
 @dp.callback_query(F.data.startswith("admin_user_reset_"))
 async def process_admin_user_reset_cb(callback: CallbackQuery):
