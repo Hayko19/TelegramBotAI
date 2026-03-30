@@ -597,7 +597,7 @@ async def process_admin_active_users(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("admin_user_manage_"))
 async def process_admin_user_manage(callback: CallbackQuery):
-    if callback.fromuser and callback.from_user.id not in config.ADMIN_IDS:
+    if callback.from_user and callback.from_user.id not in config.ADMIN_IDS:
         return
     
     target_id = int(callback.data.split("_")[3])
