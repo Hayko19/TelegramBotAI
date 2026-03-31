@@ -130,7 +130,7 @@ async def get_active_users_list_today(limit: int = 10) -> list[dict]:
     """Получить список самых активных пользователей за сегодня."""
     today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
     query = """
-        SELECT r.user_id, u.username, COUNT(r.id) as req_count 
+        SELECT r.user_id, u.username, COUNT(r.id) as req_count, u.is_approved
         FROM user_requests r
         LEFT JOIN users u ON r.user_id = u.user_id
         WHERE r.timestamp >= ?
@@ -143,9 +143,44 @@ async def get_active_users_list_today(limit: int = 10) -> list[dict]:
         rows = await cursor.fetchall()
         
     return [
-        {"user_id": row[0], "username": row[1], "count": row[2]}
+        {"user_id": row[0], "username": row[1], "count": row[2], "is_approved": row[3] if len(row) > 3 else 1}
         for row in rows
     ]
+
+
+async def get_total_users_count() -> int:
+    """Получить общее количество пользователей."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def get_users_paginated(limit: int, offset: int) -> list[dict]:
+    """Получить список пользователей с пагинацией."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT user_id, username, is_approved FROM users ORDER BY user_id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"user_id": row[0], "username": row[1], "is_approved": row[2]}
+            for row in rows
+        ]
+
+
+async def get_banned_users() -> list[dict]:
+    """Получить список всех забаненных пользователей."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT user_id, username, is_approved FROM users WHERE is_approved = -1 ORDER BY user_id DESC"
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"user_id": row[0], "username": row[1], "is_approved": row[2]}
+            for row in rows
+        ]
 
 
 async def reset_all_requests_today():

@@ -271,6 +271,9 @@ def _get_admin_main_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="🔄 Сбросить всё (опасно)", callback_data="admin_reset_confirm"
+                ),
+                InlineKeyboardButton(
+                    text="👥 Все пользователи", callback_data="admin_all_users_0"
                 )
             ],
         ]
@@ -589,10 +592,13 @@ async def process_admin_main_menu(callback: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data == "admin_active_users")
-async def process_admin_active_users(callback: CallbackQuery):
+async def process_admin_active_users(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         await callback.answer("🔒 Доступ запрещен", show_alert=True)
         return
+
+    # Сохраняем текущий список в состояние для кнопки "Назад"
+    await state.update_data(admin_last_list=callback.data)
 
     users = await database.get_active_users_list_today(limit=10)
 
@@ -624,8 +630,101 @@ async def process_admin_active_users(callback: CallbackQuery):
     await callback.answer()
 
 
+@dp.callback_query(F.data.startswith("admin_all_users_"))
+async def process_admin_all_users(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("🔒 Доступ запрещен", show_alert=True)
+        return
+
+    # Сохраняем текущий список в состояние для кнопки "Назад"
+    await state.update_data(admin_last_list=callback.data)
+
+    # Извлекаем offset из callback_data
+    try:
+        offset = int(callback.data.split("_")[3])
+    except (IndexError, ValueError):
+        offset = 0
+
+    limit = 10
+    users = await database.get_users_paginated(limit, offset)
+    total_users = await database.get_total_users_count()
+
+    if not users:
+        if offset == 0:
+            await callback.answer("В базе данных пока нет пользователей.", show_alert=True)
+        else:
+            await callback.answer("Больше пользователей нет.", show_alert=True)
+        return
+
+    current_page = (offset // limit) + 1
+    total_pages = (total_users + limit - 1) // limit
+
+    text = (
+        f"👥 <b>Все пользователи ({total_users}):</b>\n"
+        f"Страница {current_page} из {total_pages}\n\n"
+        "Выберите пользователя для управления:"
+    )
+
+    inline_keyboard = []
+
+    # Статусы и соответствующие эмодзи
+    # 1 - одобрен, 0 - ожидает, -1 - забанен
+    status_emojis = {
+        1: "✅",
+        0: "⏳",
+        -1: "❌"
+    }
+
+    for u in users:
+        emoji = status_emojis.get(u["is_approved"], "❓")
+        username_str = f"@{u['username']}" if u["username"] else f"{u['user_id']}"
+        btn_text = f"{emoji} {username_str}"
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=btn_text, callback_data=f"admin_user_manage_{u['user_id']}"
+                )
+            ]
+        )
+
+    # Кнопки пагинации
+    nav_buttons = []
+    if offset >= limit:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️ Пред.", callback_data=f"admin_all_users_{offset - limit}"
+            )
+        )
+    
+    if offset + limit < total_users:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="След. ➡️", callback_data=f"admin_all_users_{offset + limit}"
+            )
+        )
+
+    if nav_buttons:
+        inline_keyboard.append(nav_buttons)
+
+    # Кнопка возврата
+    inline_keyboard.append(
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="admin_main_menu")]
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+    except Exception as e:
+        # Если сообщение не изменилось (например, при быстром кликанье), игнорируем ошибку
+        if "message is not modified" not in str(e).lower():
+            logger.error(f"Ошибка при обновлении списка пользователей: {e}")
+    
+    await callback.answer()
+
+
 @dp.callback_query(F.data.startswith("admin_user_manage_"))
-async def process_admin_user_manage(callback: CallbackQuery):
+async def process_admin_user_manage(callback: CallbackQuery, state: FSMContext):
     if callback.from_user and callback.from_user.id not in config.ADMIN_IDS:
         return
 
@@ -636,6 +735,10 @@ async def process_admin_user_manage(callback: CallbackQuery):
     current_limit = int(limit_str)
     remaining = max(0, current_limit - used)
     is_approved = await database.get_user_approval(target_id)
+
+    # Получаем последний список из состояния
+    fsm_data = await state.get_data()
+    back_callback = fsm_data.get("admin_last_list", "admin_active_users")
 
     status_str = "⏳ <b>Ожидает</b>"
     if is_approved == 1:
@@ -658,7 +761,8 @@ async def process_admin_user_manage(callback: CallbackQuery):
                 text="🔄 Сбросить лимит", callback_data=f"admin_user_reset_{target_id}"
             ),
             InlineKeyboardButton(
-                text="🛑 Блок (на сегодня)", callback_data=f"admin_user_block_{target_id}"
+                text="🛑 Блок (на сегодня)",
+                callback_data=f"admin_user_block_{target_id}",
             ),
         ]
 
@@ -694,7 +798,7 @@ async def process_admin_user_manage(callback: CallbackQuery):
             approval_buttons,
             [
                 InlineKeyboardButton(
-                    text="⬅️ К списку юзеров", callback_data="admin_active_users"
+                    text="⬅️ К списку юзеров", callback_data=back_callback
                 )
             ],
         ]
@@ -704,7 +808,7 @@ async def process_admin_user_manage(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("admin_user_approve_"))
-async def process_admin_user_approve_cb(callback: CallbackQuery):
+async def process_admin_user_approve_cb(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         return
     target_id = int(callback.data.split("_")[3])
@@ -716,38 +820,38 @@ async def process_admin_user_approve_cb(callback: CallbackQuery):
         )
     except Exception:
         pass
-    await process_admin_user_manage(callback)
+    await process_admin_user_manage(callback, state)
 
 
 @dp.callback_query(F.data.startswith("admin_user_reject_"))
-async def process_admin_user_reject_cb(callback: CallbackQuery):
+async def process_admin_user_reject_cb(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         return
     target_id = int(callback.data.split("_")[3])
     await database.update_user_approval(target_id, -1)
     await callback.answer("❌ Доступ отозван!", show_alert=True)
-    await process_admin_user_manage(callback)
+    await process_admin_user_manage(callback, state)
 
 
 @dp.callback_query(F.data.startswith("admin_user_reset_"))
-async def process_admin_user_reset_cb(callback: CallbackQuery):
+async def process_admin_user_reset_cb(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         return
     target_id = int(callback.data.split("_")[3])
     await database.reset_user_requests_today(target_id)
     await callback.answer("✅ Лимит сброшен", show_alert=True)
-    await process_admin_user_manage(callback)
+    await process_admin_user_manage(callback, state)
 
 
 @dp.callback_query(F.data.startswith("admin_user_block_"))
-async def process_admin_user_block_cb(callback: CallbackQuery):
+async def process_admin_user_block_cb(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         return
     target_id = int(callback.data.split("_")[3])
     limit_str = await database.get_setting("daily_limit", str(config.DAILY_USER_LIMIT))
     await database.block_user_today(target_id, int(limit_str))
     await callback.answer("🛑 Пользователь заблокирован до завтра", show_alert=True)
-    await process_admin_user_manage(callback)
+    await process_admin_user_manage(callback, state)
 
 
 @dp.callback_query(F.data == "admin_settings")
