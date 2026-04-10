@@ -1149,6 +1149,13 @@ async def handle_chat_message(message: Message):
     if not clean_text:
         clean_text = "Привет!"
 
+    # Добавляем контекст опроса, если ответ на него
+    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == bot.id:
+        if message.reply_to_message.poll:
+            poll = message.reply_to_message.poll
+            options_str = ", ".join([opt.text for opt in poll.options])
+            clean_text = f"[Контекст: пользователь отвечает на ваш опрос. Вопрос: «{poll.question}». Варианты: {options_str}]\n\n{clean_text}"
+
     # Отправляем индикатор набора текста
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
