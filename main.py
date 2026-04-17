@@ -321,11 +321,13 @@ async def cmd_admin(message: Message, state: FSMContext):
             "poll_topics", "история, кулинария, игры, кино"
         )
 
+        schedule_display = "отключено" if not schedule.strip() else schedule
+
         msg_text = (
             "🛠 <b>Панель администратора</b>\n\n"
             f"📊 <b>Текущие настройки:</b>\n"
             f"• Дневной лимит ИИ: <code>{limit}</code>\n"
-            f"• Расписание опросов: <code>{schedule}</code>\n"
+            f"• Расписание опросов: <code>{schedule_display}</code>\n"
             f"• Темы опросов: <code>{topics}</code>\n\n"
             "Выберите действие в меню ниже:"
         )
@@ -577,11 +579,13 @@ async def process_admin_main_menu(callback: CallbackQuery, state: FSMContext):
     schedule = await database.get_setting("poll_hours", config.POLL_HOURS)
     topics = await database.get_setting("poll_topics", "история, кулинария, игры, кино")
 
+    schedule_display = "отключено" if not schedule.strip() else schedule
+
     msg_text = (
         "🛠 <b>Панель администратора</b>\n\n"
         f"📊 <b>Текущие настройки:</b>\n"
         f"• Дневной лимит ИИ: <code>{limit}</code>\n"
-        f"• Расписание опросов: <code>{schedule}</code>\n"
+        f"• Расписание опросов: <code>{schedule_display}</code>\n"
         f"• Темы опросов: <code>{topics}</code>\n\n"
         "Выберите действие в меню ниже:"
     )
