@@ -290,6 +290,9 @@ def _get_admin_settings_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="🕒 Расписание", callback_data="admin_set_schedule"
+                ),
+                InlineKeyboardButton(
+                    text="🔴 Отключить опросы", callback_data="admin_disable_polls"
                 )
             ],
             [
@@ -914,7 +917,7 @@ async def process_admin_set_schedule(callback: CallbackQuery, state: FSMContext)
         ]
     )
     await callback.message.edit_text(
-        "Отправьте новое расписание опросов.\nПример: <code>09:30, 18:00</code>\nОставьте пустым для отключения опросов.",
+        "Отправьте новое расписание опросов.\nПример: <code>09:30, 18:00</code>",
         parse_mode="HTML",
         reply_markup=keyboard,
     )
@@ -936,6 +939,25 @@ async def process_admin_set_topics(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML",
         reply_markup=keyboard,
     )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_disable_polls")
+async def process_admin_disable_polls(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        return
+    await database.set_setting("poll_hours", "")
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ В настройки", callback_data="admin_settings")]
+        ]
+    )
+    await callback.message.edit_text(
+        "✅ Опросы отключены. Расписание очищено.",
+        reply_markup=keyboard,
+    )
+    if scheduler:
+        await setup_poll_jobs(scheduler)
     await callback.answer()
 
 
@@ -968,9 +990,9 @@ async def admin_save_limit(message: Message, state: FSMContext):
 @dp.message(AdminStates.waiting_for_schedule)
 async def admin_save_schedule(message: Message, state: FSMContext):
     target_arg = message.text.strip()
-    if target_arg and not re.match(r"^(\d{2}:\d{2})(,\s*\d{2}:\d{2})*$", target_arg):
+    if not target_arg or not re.match(r"^(\d{2}:\d{2})(,\s*\d{2}:\d{2})*$", target_arg):
         await message.answer(
-            "❌ Неверный формат времени.\nПример: <code>09:00, 15:30</code>\nИли оставьте пустым для отключения опросов.",
+            "❌ Неверный формат времени.\nПример: <code>09:00, 15:30</code>",
             parse_mode="HTML",
         )
         return
@@ -981,12 +1003,8 @@ async def admin_save_schedule(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="⬅️ В настройки", callback_data="admin_settings")]
         ]
     )
-    if target_arg:
-        msg = f"✅ Расписание опросов обновлено на <b>{target_arg}</b>"
-    else:
-        msg = "✅ Расписание опросов отключено (пустое расписание)."
     await message.answer(
-        msg,
+        f"✅ Расписание опросов обновлено на <b>{target_arg}</b>",
         parse_mode="HTML",
         reply_markup=keyboard,
     )
